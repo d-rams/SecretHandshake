@@ -8,14 +8,30 @@ import Leap, sys, pickle, math
 sys.path.append("C:\\Users\\A\\Documents\\GitHub\\SecretHandshake\\lib\\libsvm-3.18\\python\\")
 from svmutil import *
 
+# This is a workaround for the Leap.Vector.angle_to() function which occasionally returns nan. 
+def angleTo(v1,v2):
+    denom = v1.magnitude_squared * v2.magnitude_squared
+    prec = 1e-6
+    if (denom <= prec):
+        return 0.0
+    else:
+        val = (v1.dot(v2) / denom)
+        if (math.fabs(val) > (1.0 - prec)):
+            return 0.0
+        return math.acos(val)
+
 class FingerJointVector():
+    # This contructor packages a finger into a list of four 3-vectors as well as a compressed,
+    # hand-relative representation consisting of four angles, all normalized into the range [0,1]
     def __init__(self, apiFinger, palmCenter, palmNormal):
         self.joints = [] #four 3-vectors Tip,pip,dip,mcp
-        self.compressedRep = [] #unit vector + two angles
+        self.compressedRep = [] #four angles
 
+        # Append joints into the joint list
         for i in range(4):
             self.joints.append(apiFinger.joint_position(i))
         
+        # Important joint->joint vectors
         dc0 = apiFinger.joint_position(0) - palmCenter
         d01 = apiFinger.joint_position(1) - apiFinger.joint_position(0)
         d12 = apiFinger.joint_position(2) - apiFinger.joint_position(1)
@@ -23,19 +39,25 @@ class FingerJointVector():
         
         dc0 = dc0.normalized
         cross1 = palmNormal.cross(dc0)
+        # Basis for the plane perp. to dc0
         cross1 = cross1.normalized
         cross2 = dc0.cross(cross1)
 
+        # Projection of d01 onto the plane perp. to dc0
         proj = d01 - (dc0 * (d01.dot(dc0)))
         proj = proj.normalized
 
-        ac1 = dc0.angle_to(d01) / (math.pi)
-        acn = cross1.angle_to(proj)
+        # Spherical coordinate angles for d01 rel. to dc0:
+        # polar angle: 
+        ac1 = angleTo(dc0, d01) / (math.pi)
+        # azimuthal angle
+        acn = angleTo(cross1, proj)
         acn = math.copysign(acn, proj.dot(cross2))
         acn = (acn + (math.pi)) / (2 * math.pi)
-
-        a02 = d01.angle_to(d12) * 2 / (math.pi)
-        a13 = d12.angle_to(d23) * 2 / (math.pi)
+        # Middle rel. finger angle
+        a02 = angleTo(d01, d12) * 2 / (math.pi)
+        # Final rel. finger angle
+        a13 = angleTo(d12, d23) * 2 / (math.pi)
 
         self.compressedRep.append(ac1)
         self.compressedRep.append(acn)
@@ -44,6 +66,9 @@ class FingerJointVector():
 
 
 class PoseVector():
+    # This constructor appends the five compressed representations into a single pose representation,
+    # as well as storing all 20 joint coordinates into a single vertex list
+    # The compressed pose representation is 20-dimensional and is invariant under the action of SE(3) on the hand
     def __init__(self, apiHand):
         self.vertices = []
         self.compressedRep = []
@@ -63,17 +88,17 @@ class PoseListener(Leap.Listener):
     doRecognition = False
 
     def on_init(self, controller):
-        print "Initialized"
+        print "Initialized Leap Controller"
 
     def on_connect(self, controller):
-        print "Connected"
+        print "Connected Leap Controller"
 
     def on_disconnect(self, controller):
         # Note: not dispatched when running in a debugger.
-        print "Disconnected"
+        print "Disconnected Leap Controller"
 
     def on_exit(self, controller):
-        print "Exited"
+        print "Exited Leap Control"
 
     def on_frame(self, controller):
         # Get the most recent frame and report some basic information
@@ -83,14 +108,34 @@ class PoseListener(Leap.Listener):
             # Get the first hand
             hand = frame.hands[0]
             if (hand.is_right == True):
+                # Store the current pose vector
                 self.curPose = PoseVector(hand)
                 if (self.doRecognition == True):
+                    # Do pose prediction from the svm
                     self.recognize(self.curPose.compressedRep)
+                else:
+                    self.filter_reccognitions(0)
+            else:
+                self.filter_reccognitions(0)
+        else:
+            self.filter_reccognitions(0)
 
+    # Predict the current pose
     def recognize(self, pose):
         self.decisions.append(int(svm_predict([i], [pose], self.machine, "-q")[0][0]))
-        print self.decisions[len(self.decisions)-1]
-        
+        #print self.decisions[len(self.decisions)-1]
+        self.filter_reccognitions(self.decisions[len(self.decisions)-1])
+
+    # Apply filtering to string of predicted poses
+    def filter_reccognitions(self, pose):
+        self.recentFrequency.setdefault(pose,0)
+        self.recentFrequency[pose] += 1
+        if pose != self.currentGuess and self.recentFrequency[pose] >= self.threshold + max([self.recentFrequency[k] if k != pose and k != 0 and k != self.currentGuess else 0 for k in self.recentFrequency]):
+            self.currentGuess = pose
+            self.recentFrequency = {}
+            if self.currentGuess != 0:
+                print self.currentGuess
+        #print pose, self.recentFrequency
 
     def state_string(self, state):
         if state == Leap.Gesture.STATE_START:
@@ -107,39 +152,55 @@ class PoseListener(Leap.Listener):
 
 
 def main():
+    # Did we train the SVM yet?
     traind = False
-
     # Create a training listener and controller
     listener = PoseListener()
+    # Prediction mode
     listener.doRecognition = False
+    # Default prediction
+    listener.currentGuess = 0
+    # Filtering params
+    listener.threshold = 20
+    listener.recentFrequency = {}
+    # Default training label
     trainingClass = 1
+    # Main data list
     dataList = []
+    # Associated class labels
     classList = []
+    # The Leap controller
     controller = Leap.Controller()
 
     # Have the sample listener receive events from the controller
     controller.add_listener(listener)
 
+    # Main IO loop:
     # Keep this process running until it is killed
     runProgram = True
     while(runProgram):
-        print "Type a number to specify the training class,"
-        print "Press Enter to store a pose,"
+        print "Type a number to specify the training class (currently = %d)," % trainingClass
+        print "Press Enter to add a pose to the current data list,"
         print "Type 'l' to load data from file,"
         print "Type 't' to train,"
-        print "Type 'p' to see the pose classification"
+        print "Type 'p' to see the pose classification,"
+        print "Type 's' to store the current data list to file,"
         print "Type 'q' to break." 
 
         inpt = sys.stdin.readline()
+        # Quit:
         if (inpt == 'q\n'):
+            # Remove the sample listener when done
+            controller.remove_listener(listener)
+            runProgram = False
+        # Save
+        if (inpt == 's\n'):
             writeFile = open('Output.txt','w')
             for i in range(len(dataList)):
                 dataList[i].append(classList[i])
             pickle.dump(dataList, writeFile)
             writeFile.close()
-            # Remove the sample listener when done
-            controller.remove_listener(listener)
-            runProgram = False
+        # Train
         if (inpt == 't\n'):
             listener.doRecognition = False
             prob = svm_problem(classList, dataList)
@@ -149,12 +210,14 @@ def main():
             param.C = 10
             listener.machine = svm_train(prob, param)
             traind = True
+        # Predict
         if (inpt == 'p\n'):
             if (traind == False):
                 print "The SVM has not been trained."
             else:
                 listener.decisions = []
                 listener.doRecognition = True
+        # Load
         if (inpt == 'l\n'):
             listener.doRecognition = False
             readFile = open('Output.txt', 'r')
@@ -164,6 +227,7 @@ def main():
                 classList.append(dataList[i].pop())
             readFile.close()
             print "Data loaded.  Length = %d" % len(dataList)    
+        # Enter data
         if (inpt == '\n'):
             if (listener.doRecognition == False):
                 print "Storing hand pose vector with training class %d" % trainingClass
@@ -176,6 +240,7 @@ def main():
                 print "]"
             else:
                 listener.doRecognition = False
+        # Change trainging label
         if (inpt == '0\n'):
             trainingClass = 0
             print "Traing Class set to %d" % trainingClass
@@ -196,6 +261,15 @@ def main():
             print "Traing Class set to %d" % trainingClass
         if (inpt == '6\n'):
             trainingClass = 6
+            print "Traing Class set to %d" % trainingClass
+        if (inpt == '7\n'):
+            trainingClass = 7
+            print "Traing Class set to %d" % trainingClass
+        if (inpt == '8\n'):
+            trainingClass = 8
+            print "Traing Class set to %d" % trainingClass
+        if (inpt == '9\n'):
+            trainingClass = 9
             print "Traing Class set to %d" % trainingClass
 
 if __name__ == "__main__":
