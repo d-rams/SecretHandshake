@@ -4,29 +4,41 @@
 # Author: Aaron M. Smith                                                       #
 ################################################################################
 
-import Leap, sys, pickle
-sys.path.append("F:\\SecretHandshake\\lib\\libsvm-3.18\\python\\")
+import Leap, sys, pickle, math
+sys.path.append("C:\\Users\\A\\Documents\\GitHub\\SecretHandshake\\lib\\libsvm-3.18\\python\\")
 from svmutil import *
 
 class FingerJointVector():
-    def __init__(self, apiFinger):
+    def __init__(self, apiFinger, palmCenter, palmNormal):
         self.joints = [] #four 3-vectors Tip,pip,dip,mcp
         self.compressedRep = [] #unit vector + two angles
 
         for i in range(4):
             self.joints.append(apiFinger.joint_position(i))
-
+        
+        dc0 = apiFinger.joint_position(0) - palmCenter
         d01 = apiFinger.joint_position(1) - apiFinger.joint_position(0)
         d12 = apiFinger.joint_position(2) - apiFinger.joint_position(1)
         d23 = apiFinger.joint_position(3) - apiFinger.joint_position(2)
-        a02 = d01.angle_to(d12)
         
-        # identical to a02 in the current implementation for all but the thumb
-        a13 = d12.angle_to(d23)
-        
-        for i in range(3):
-            #self.compressedRep.append(apiFinger.joint_position(0)[i])
-            self.compressedRep.append(d01.normalized[i])
+        dc0 = dc0.normalized
+        cross1 = palmNormal.cross(dc0)
+        cross1 = cross1.normalized
+        cross2 = dc0.cross(cross1)
+
+        proj = d01 - (dc0 * (d01.dot(dc0)))
+        proj = proj.normalized
+
+        ac1 = dc0.angle_to(d01) / (math.pi)
+        acn = cross1.angle_to(proj)
+        acn = math.copysign(acn, proj.dot(cross2))
+        acn = (acn + (math.pi)) / (2 * math.pi)
+
+        a02 = d01.angle_to(d12) * 2 / (math.pi)
+        a13 = d12.angle_to(d23) * 2 / (math.pi)
+
+        self.compressedRep.append(ac1)
+        self.compressedRep.append(acn)
         self.compressedRep.append(a02)
         self.compressedRep.append(a13)
 
@@ -37,9 +49,10 @@ class PoseVector():
         self.compressedRep = []
         palmCenter = apiHand.palm_position
         palmDir = apiHand.direction
+        palmNormal = apiHand.palm_normal
 
         for finger in apiHand.fingers:
-            fingerJointVector = FingerJointVector(finger)
+            fingerJointVector = FingerJointVector(finger, palmCenter, palmNormal)
             self.vertices.extend(fingerJointVector.joints)
             self.compressedRep.extend(fingerJointVector.compressedRep)
 
@@ -131,8 +144,8 @@ def main():
             listener.doRecognition = False
             prob = svm_problem(classList, dataList)
             param = svm_parameter()
-            #param.kernel_type = LINEAR
             param.kernel_type = RBF
+            #param.svm_type = NU_SVC
             param.C = 10
             listener.machine = svm_train(prob, param)
             traind = True
@@ -152,15 +165,17 @@ def main():
             readFile.close()
             print "Data loaded.  Length = %d" % len(dataList)    
         if (inpt == '\n'):
-            listener.doRecognition = False
-            print "Storing hand pose vector with training class %d" % trainingClass
-            print "["
-            curPose = listener.curPose.compressedRep
-            for i in range(25):
-                print (curPose[i])
-            classList.append(trainingClass)
-            dataList.append(curPose)
-            print "]"
+            if (listener.doRecognition == False):
+                print "Storing hand pose vector with training class %d" % trainingClass
+                print "["
+                curPose = listener.curPose.compressedRep
+                for i in range(20):
+                    print (curPose[i])
+                classList.append(trainingClass)
+                dataList.append(curPose)
+                print "]"
+            else:
+                listener.doRecognition = False
         if (inpt == '0\n'):
             trainingClass = 0
             print "Traing Class set to %d" % trainingClass
