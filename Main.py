@@ -1,11 +1,13 @@
 ################################################################################
-# Copyright (C) 2012-2013 Leap Motion, Inc. All rights reserved.               #
-# Leap Motion proprietary and confidential.                                    #
+# Copyright (C) 2014                                                           #
+#                                                                              #
 # Author: Aaron M. Smith                                                       #
 ################################################################################
 
-import Leap, sys, pickle, math
-sys.path.append("C:\\Users\\A\\Documents\\GitHub\\SecretHandshake\\lib\\libsvm-3.18\\python\\")
+import sys, pickle, math
+sys.path.append("C:\\LocalLibraries\\lib\\x86\\")
+sys.path.append("C:\\LocalLibraries\\lib\\libsvm-3.18\\python\\")
+import Leap
 from svmutil import *
 
 # This is a workaround for the Leap.Vector.angle_to() function which occasionally returns nan. 
@@ -185,7 +187,7 @@ def main():
         print "Type 't' to train,"
         print "Type 'p' to see the pose classification,"
         print "Type 's' to store the current data list to file,"
-        print "Type 'q' to break." 
+        print "Type 'q' to quit." 
 
         inpt = sys.stdin.readline()
         # Quit:
