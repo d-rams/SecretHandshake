@@ -11,7 +11,7 @@ import Leap
 from svmutil import *
 from numpy import random
 
-# This is a workaround for the Leap.Vector.angle_to() function which occasionally returns nan. 
+# This is a workaround for the Leap.Vector.angle_to() function which occasionally returns nan.
 def angleTo(v1,v2):
     denom = v1.magnitude_squared * v2.magnitude_squared
     prec = 1e-6
@@ -33,13 +33,13 @@ class FingerJointVector():
         # Append joints into the joint list
         for i in range(4):
             self.joints.append(apiFinger.joint_position(i))
-        
+
         # Important joint->joint vectors
         dc0 = apiFinger.joint_position(0) - palmCenter
         d01 = apiFinger.joint_position(1) - apiFinger.joint_position(0)
         d12 = apiFinger.joint_position(2) - apiFinger.joint_position(1)
         d23 = apiFinger.joint_position(3) - apiFinger.joint_position(2)
-        
+
         dc0 = dc0.normalized
         cross1 = palmNormal.cross(dc0)
         # Basis for the plane perp. to dc0
@@ -51,7 +51,7 @@ class FingerJointVector():
         proj = proj.normalized
 
         # Spherical coordinate angles for d01 rel. to dc0:
-        # polar angle: 
+        # polar angle:
         ac1 = angleTo(dc0, d01) / (math.pi)
         # azimuthal angle
         acn = angleTo(cross1, proj)
@@ -133,7 +133,7 @@ class PoseListener(Leap.Listener):
     def filter_reccognitions(self, pose):
         self.recentFrequency.setdefault(pose, 0)
         self.recentFrequency[pose] += 1
-        if pose != self.currentGuess and self.recentFrequency[pose] >= self.threshold + max([self.recentFrequency[k] if k != pose and k != 0 else 0 for k in self.recentFrequency]):
+        if pose != self.currentGuess and self.recentFrequency[pose] >= self.threshold + max([self.recentFrequency[k] if k != pose and k != 0  and k!= self.currentGuess else 0 for k in self.recentFrequency]):
             self.currentGuess = pose
             self.recentFrequency = {}
             if self.currentGuess != 0:
@@ -186,7 +186,7 @@ def CrossValidate(numDivs, dataByClass, numClasses, C, gamma):
     param.kernel_type = RBF
     param.C = C
     param.gamma = gamma
-    
+
     crossValCount = 0
     totSamples = 0
     for i in range(numDivs):
@@ -207,11 +207,11 @@ def CrossValidate(numDivs, dataByClass, numClasses, C, gamma):
 
     if (totSamples > 0):
         return (float(crossValCount) / float(totSamples))
-    else: 
+    else:
         return 0.0
 
 # Performs a grid search for the best (C, gamma) parameters determined by the best
-# cross validation percentage 
+# cross validation percentage
 def GridSearchParams(nC, nG, dataByClass, numClasses):
     numDivs = 10
     bestRatio = 0.0
@@ -289,7 +289,7 @@ def main():
         print "Type 't' to train with current parameters,"
         print "Type 'p' to see the pose classification,"
         print "Type 's' to store the current data list to file,"
-        print "Type 'q' to quit." 
+        print "Type 'q' to quit."
 
         inpt = sys.stdin.readline()
         # Quit:
