@@ -9,6 +9,7 @@ sys.path.append("C:\\LocalLibraries\\lib\\x86\\")
 sys.path.append("C:\\LocalLibraries\\lib\\libsvm-3.18\\python\\")
 import Leap
 from svmutil import *
+from numpy import random
 
 # This is a workaround for the Leap.Vector.angle_to() function which occasionally returns nan. 
 def angleTo(v1,v2):
@@ -125,7 +126,7 @@ class PoseListener(Leap.Listener):
     # Predict the current pose
     def recognize(self, pose):
         self.decisions.append(int(svm_predict([i], [pose], self.machine, "-q")[0][0]))
-        print self.decisions[len(self.decisions)-1]
+        #print self.decisions[len(self.decisions)-1]
         self.filter_reccognitions(self.decisions[len(self.decisions)-1])
 
     # Apply filtering to recognitions
@@ -137,10 +138,13 @@ class PoseListener(Leap.Listener):
             self.recentFrequency = {}
             if self.currentGuess != 0:
                 self.seenPoses.append(self.currentGuess)
-                #print "[%d]" % self.currentGuess
+                if ((len(self.seenPoses) - len(self.password)) >= 0):
+                    print self.seenPoses[len(self.seenPoses) - len(self.password):]
+                else:
+                    print self.seenPoses
                 if self.password == self.seenPoses[len(self.seenPoses) - len(self.password):]:
                     print "Open sesame"
-                    #self.ser.write("O")
+                    self.ser.write("O")
 
     def state_string(self, state):
         if state == Leap.Gesture.STATE_START:
@@ -155,10 +159,14 @@ class PoseListener(Leap.Listener):
         if state == Leap.Gesture.STATE_INVALID:
             return "STATE_INVALID"
 
-# Divides the data into numDivs pieces in order to run the cross validation scheme
-def DivideData(dataByClass, numDivs, numClasses, dividedData, dividedClasses):
+# Divides the data into numDivs pieces in order to run the cross validation scheme.
+# The selection into bins is done at random.
+def DivideDataRandom(dataByClass, numDivs, numClasses, dividedData, dividedClasses):
     sampleSize = map(lambda i : len(dataByClass[i]) // numDivs, range(numClasses))
     print sampleSize
+    for j in range(numClasses):
+        random.permutation(dataByClass[j])
+
     for i in range(numDivs):
         for j in range(numClasses):
             for k in range(sampleSize[j]):
@@ -172,7 +180,7 @@ def CrossValidate(numDivs, dataByClass, numClasses, C, gamma):
     for i in range(numDivs):
         dividedData.append([])
         dividedClasses.append([])
-    DivideData(dataByClass, numDivs, numClasses, dividedData, dividedClasses)
+    DivideDataRandom(dataByClass, numDivs, numClasses, dividedData, dividedClasses)
 
     param = svm_parameter()
     param.kernel_type = RBF
@@ -218,7 +226,7 @@ def GridSearchParams(nC, nG, dataByClass, numClasses):
     #            bestC = C
     #            bestG = G
     # Linear grid search
-    for C in [.774 + .075/float(nC) * x for x in range(nC)]:
+    for C in [.750 + .05/float(nC) * x for x in range(nC)]:
         for G in [228 + 38/float(nG) * y for y in range(nG)]:
             ratio = CrossValidate(numDivs, dataByClass, numClasses, C, G)
             if (ratio > bestRatio):
@@ -247,15 +255,15 @@ def main():
     # Poses recognized
     listener.seenPoses = []
     # Password
-    listener.password = [1,2,3,4,5,6]
+    listener.password = [1,2,6,3,5,1]
     # Serial port communication
-    #listener.ser = serial.Serial(4) # 4 is a magic number
+    listener.ser = serial.Serial(2) #COM3
     # Default training label
     trainingClass = 1
     # Default margin coefficient
-    CVal = .775
+    CVal = .770
     # Default gamma value
-    GVal = 248.9
+    GVal = 252.2
     # Main data list
     dataList = []
     # Associated class labels
@@ -299,7 +307,7 @@ def main():
         # Cross Validate
         if (inpt == 'v\n'):
             listener.doRecognition = False
-            foundParams = GridSearchParams(20, 20, dataByClass, numClasses)
+            foundParams = GridSearchParams(10, 10, dataByClass, numClasses)
             CVal = foundParams[1]
             GVal = foundParams[2]
         # Train
@@ -381,7 +389,7 @@ def main():
             print "Traing Class set to %d" % trainingClass
         if (inpt == 'c\n'):
             print "Closing box"
-            #listener.ser.write('C')
+            listener.ser.write('C')
 
 if __name__ == "__main__":
     main()
