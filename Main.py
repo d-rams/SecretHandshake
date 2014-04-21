@@ -4,7 +4,7 @@
 # Author: Aaron M. Smith                                                       #
 ################################################################################
 
-import sys, pickle, math
+import sys, pickle, math, serial
 sys.path.append("C:\\LocalLibraries\\lib\\x86\\")
 sys.path.append("C:\\LocalLibraries\\lib\\libsvm-3.18\\python\\")
 import Leap
@@ -125,19 +125,22 @@ class PoseListener(Leap.Listener):
     # Predict the current pose
     def recognize(self, pose):
         self.decisions.append(int(svm_predict([i], [pose], self.machine, "-q")[0][0]))
-        #print self.decisions[len(self.decisions)-1]
+        print self.decisions[len(self.decisions)-1]
         self.filter_reccognitions(self.decisions[len(self.decisions)-1])
 
-    # Apply filtering to string of predicted poses
+    # Apply filtering to recognitions
     def filter_reccognitions(self, pose):
-        self.recentFrequency.setdefault(pose,0)
+        self.recentFrequency.setdefault(pose, 0)
         self.recentFrequency[pose] += 1
-        if pose != self.currentGuess and self.recentFrequency[pose] >= self.threshold + max([self.recentFrequency[k] if k != pose and k != 0 and k != self.currentGuess else 0 for k in self.recentFrequency]):
+        if pose != self.currentGuess and self.recentFrequency[pose] >= self.threshold + max([self.recentFrequency[k] if k != pose and k != 0 else 0 for k in self.recentFrequency]):
             self.currentGuess = pose
             self.recentFrequency = {}
             if self.currentGuess != 0:
-                print self.currentGuess
-        #print pose, self.recentFrequency
+                self.seenPoses.append(self.currentGuess)
+                #print "[%d]" % self.currentGuess
+                if self.password == self.seenPoses[len(self.seenPoses) - len(self.password):]:
+                    print "Open sesame"
+                    #self.ser.write("O")
 
     def state_string(self, state):
         if state == Leap.Gesture.STATE_START:
@@ -152,8 +155,84 @@ class PoseListener(Leap.Listener):
         if state == Leap.Gesture.STATE_INVALID:
             return "STATE_INVALID"
 
+# Divides the data into numDivs pieces in order to run the cross validation scheme
+def DivideData(dataByClass, numDivs, numClasses, dividedData, dividedClasses):
+    sampleSize = map(lambda i : len(dataByClass[i]) // numDivs, range(numClasses))
+    print sampleSize
+    for i in range(numDivs):
+        for j in range(numClasses):
+            for k in range(sampleSize[j]):
+                dividedData[i].append(dataByClass[j][sampleSize[j] * i + k])
+                dividedClasses[i].append(j)
+
+# Computes the cross valication percentage associated to the pair of params C,gamma
+def CrossValidate(numDivs, dataByClass, numClasses, C, gamma):
+    dividedData = []
+    dividedClasses = []
+    for i in range(numDivs):
+        dividedData.append([])
+        dividedClasses.append([])
+    DivideData(dataByClass, numDivs, numClasses, dividedData, dividedClasses)
+
+    param = svm_parameter()
+    param.kernel_type = RBF
+    param.C = C
+    param.gamma = gamma
+    
+    crossValCount = 0
+    totSamples = 0
+    for i in range(numDivs):
+        curClassList = []
+        curDataList = []
+        for j in range(numDivs):
+            if (j != i):
+                curClassList.extend(dividedClasses[j])
+                curDataList.extend(dividedData[j])
+
+        prob = svm_problem(curClassList, curDataList)
+        machine = svm_train(prob, param)
+
+        for j in range(len(dividedData[i])):
+            totSamples = totSamples + 1
+            if (int(svm_predict([i], [dividedData[i][j]], machine, "-q")[0][0]) == int(dividedClasses[i][j])):
+                crossValCount = crossValCount + 1
+
+    if (totSamples > 0):
+        return (float(crossValCount) / float(totSamples))
+    else: 
+        return 0.0
+
+# Performs a grid search for the best (C, gamma) parameters determined by the best
+# cross validation percentage 
+def GridSearchParams(nC, nG, dataByClass, numClasses):
+    numDivs = 10
+    bestRatio = 0.0
+    bestC = 0
+    bestG = 0
+    # Logarithmic grid search
+    #for C in [math.pow(2, x - (nC//2)) for x in range(nC // 2)]:
+    #    for G in [math.pow(2, y - nG + 10) for y in range(nG)]:
+    #        ratio = CrossValidate(numDivs, dataByClass, numClasses, C, G)
+    #        if (ratio > bestRatio):
+    #            bestRatio = ratio
+    #            bestC = C
+    #            bestG = G
+    # Linear grid search
+    for C in [.774 + .075/float(nC) * x for x in range(nC)]:
+        for G in [228 + 38/float(nG) * y for y in range(nG)]:
+            ratio = CrossValidate(numDivs, dataByClass, numClasses, C, G)
+            if (ratio > bestRatio):
+                bestRatio = ratio
+                bestC = C
+                bestG = G
+    print 'Best ratio: {}'.format(bestRatio)
+    print 'Best gamma: {}'.format(bestG)
+    print 'Best C: {}'.format(bestC)
+    return [bestRatio, bestC, bestG]
 
 def main():
+    # Number of training classes
+    numClasses = 9
     # Did we train the SVM yet?
     traind = False
     # Create a training listener and controller
@@ -165,12 +244,26 @@ def main():
     # Filtering params
     listener.threshold = 20
     listener.recentFrequency = {}
+    # Poses recognized
+    listener.seenPoses = []
+    # Password
+    listener.password = [1,2,3,4,5,6]
+    # Serial port communication
+    #listener.ser = serial.Serial(4) # 4 is a magic number
     # Default training label
     trainingClass = 1
+    # Default margin coefficient
+    CVal = .775
+    # Default gamma value
+    GVal = 248.9
     # Main data list
     dataList = []
     # Associated class labels
     classList = []
+    # Data stoed by classList as index
+    dataByClass = []
+    for i in range(numClasses + 1):
+        dataByClass.append([])
     # The Leap controller
     controller = Leap.Controller()
 
@@ -184,7 +277,8 @@ def main():
         print "Type a number to specify the training class (currently = %d)," % trainingClass
         print "Press Enter to add a pose to the current data list,"
         print "Type 'l' to load data from file,"
-        print "Type 't' to train,"
+        print "Type 'v' to compute best training parameters via cross validation"
+        print "Type 't' to train with current parameters,"
         print "Type 'p' to see the pose classification,"
         print "Type 's' to store the current data list to file,"
         print "Type 'q' to quit." 
@@ -202,14 +296,21 @@ def main():
                 dataList[i].append(classList[i])
             pickle.dump(dataList, writeFile)
             writeFile.close()
+        # Cross Validate
+        if (inpt == 'v\n'):
+            listener.doRecognition = False
+            foundParams = GridSearchParams(20, 20, dataByClass, numClasses)
+            CVal = foundParams[1]
+            GVal = foundParams[2]
         # Train
         if (inpt == 't\n'):
             listener.doRecognition = False
+            print "Training with C= {}, and gamma = {}".format(CVal, GVal)
             prob = svm_problem(classList, dataList)
             param = svm_parameter()
             param.kernel_type = RBF
-            #param.svm_type = NU_SVC
-            param.C = 10
+            param.C = CVal
+            param.gamma = GVal
             listener.machine = svm_train(prob, param)
             traind = True
         # Predict
@@ -226,9 +327,12 @@ def main():
             dataList = pickle.load(readFile)
             classList = []
             for i in range(len(dataList)):
-                classList.append(dataList[i].pop())
+                curClass = dataList[i].pop()
+                classList.append(curClass)
+                dataByClass[curClass].append(dataList[i])
             readFile.close()
-            print "Data loaded.  Length = %d" % len(dataList)    
+            print "Data loaded.  Length = %d" % len(dataList)
+
         # Enter data
         if (inpt == '\n'):
             if (listener.doRecognition == False):
@@ -239,6 +343,8 @@ def main():
                     print (curPose[i])
                 classList.append(trainingClass)
                 dataList.append(curPose)
+                dataByClass[trainingClass].append(curPose)
+
                 print "]"
             else:
                 listener.doRecognition = False
@@ -273,6 +379,9 @@ def main():
         if (inpt == '9\n'):
             trainingClass = 9
             print "Traing Class set to %d" % trainingClass
+        if (inpt == 'c\n'):
+            print "Closing box"
+            #listener.ser.write('C')
 
 if __name__ == "__main__":
     main()
